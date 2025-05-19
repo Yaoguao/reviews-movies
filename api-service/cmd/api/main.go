@@ -3,57 +3,45 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"reviews-movies/api-service/config"
 	"reviews-movies/api-service/interanal/handler"
-	"reviews-movies/api-service/interanal/jsonlog"
 	"reviews-movies/api-service/interanal/kafka"
+	logger2 "reviews-movies/api-service/interanal/logger"
 	"strings"
 	"syscall"
 	"time"
 )
 
 type Application struct {
-	config config.Config
-	logger *jsonlog.Logger
+	config *config.Config
+	logger *slog.Logger
 }
 
 func main() {
-	var cfg config.Config
+	cfg, _ := config.LoadConfig()
 
-	flag.IntVar(&cfg.Port, "port", 8082, "API server port")
-	flag.StringVar(&cfg.Env, "env", "development",
-		"Environment (development|staging|production)")
-
-	flag.Parse()
-
-	logger := jsonlog.New(os.Stdout, jsonlog.LEVEL_INFO)
+	logger := logger2.InitLogger(cfg.Env, os.Stdout)
 
 	app := &Application{
 		config: cfg,
 		logger: logger,
 	}
 
-	addresses := []string{
-		os.Getenv("BROKER1_HOST"),
-		os.Getenv("BROKER2_HOST"),
-		os.Getenv("BROKER3_HOST"),
-	}
+	logger.Debug("Kafka Address: "+strings.Join(cfg.Kafka.Address, ", "), nil)
 
-	logger.PrintInfo(strings.Join(addresses, ", "), nil)
-
-	producer, err := kafka.NewProducer(addresses)
+	producer, err := kafka.NewProducer(cfg.Kafka.Address)
 	if err != nil {
 		log.Fatalf("Failed to create producer: %v", err)
 	}
 	defer producer.Close()
 
-	newHandler := handler.NewHandler(producer)
+	newHandler := handler.NewHandler(producer, logger, cfg)
 	app.serve(newHandler.Routes())
 	log.Fatal(err, nil)
 }
@@ -76,7 +64,7 @@ func (app *Application) serve(handler http.Handler) error {
 
 		s := <-quit
 
-		app.logger.PrintInfo("caught signal", map[string]string{
+		app.logger.Info("caught signal", map[string]string{
 			"signal": s.String(),
 		})
 
@@ -86,7 +74,7 @@ func (app *Application) serve(handler http.Handler) error {
 		shutdownError <- srv.Shutdown(ctx)
 	}()
 
-	app.logger.PrintInfo("starting server", map[string]string{
+	app.logger.Info("starting server", map[string]string{
 		"env":  app.config.Env,
 		"addr": srv.Addr,
 	})
@@ -101,7 +89,7 @@ func (app *Application) serve(handler http.Handler) error {
 		return err
 	}
 
-	app.logger.PrintInfo("stopped server", map[string]string{
+	app.logger.Info("stopped server", map[string]string{
 		"addr": srv.Addr,
 	})
 

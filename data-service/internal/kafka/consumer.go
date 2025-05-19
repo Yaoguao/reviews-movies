@@ -12,18 +12,13 @@ const (
 	noTimeout      = -1
 )
 
-type Handler interface {
-	HandleMessage(message []byte, offset kafka.Offset) error
-}
-
 type Consumer struct {
 	consumer       *kafka.Consumer
-	handler        Handler
 	stop           bool
 	consumerNumber int
 }
 
-func NewConsumer(handler Handler, address []string, topic, consumerGroup string) (*Consumer, error) {
+func NewConsumer(address []string, topic, consumerGroup string) (*Consumer, error) {
 	cfg := &kafka.ConfigMap{
 		"bootstrap.servers":  strings.Join(address, ","),
 		"group.id":           consumerGroup,
@@ -39,7 +34,6 @@ func NewConsumer(handler Handler, address []string, topic, consumerGroup string)
 	}
 	return &Consumer{
 		consumer: c,
-		handler:  handler,
 		stop:     false,
 	}, nil
 }

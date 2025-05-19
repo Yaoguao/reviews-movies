@@ -65,7 +65,7 @@ func (h *Handler) HandleMovieMessage(message []byte, offset kafka.Offset) error 
 		return fmt.Errorf("falied create movie: %s", v.Errors)
 	}
 
-	h.logger.PrintInfo("KAFKA CREATE MOVIE OFFSET", map[string]string{
+	h.logger.Debug("KAFKA CREATE MOVIE OFFSET", map[string]string{
 		"offset": offset.String(),
 	})
 
@@ -85,7 +85,6 @@ func (h *Handler) GetMovieByIdHandler(c *gin.Context) {
 		c.JSON(http.StatusNotFound, err)
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"movie": movie})
 }
 

@@ -2,19 +2,13 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"io"
-	"log"
 	"net/http"
-	"net/url"
-	"os"
 	"strconv"
 	"time"
 )
-
-var urlDataServiceMovies = os.Getenv("DATA_SERVICE_HOST") + "/api/movies"
 
 func (h *Handler) CreateMovieHandler(c *gin.Context) {
 	var input struct {
@@ -22,7 +16,7 @@ func (h *Handler) CreateMovieHandler(c *gin.Context) {
 		Year          int32     `json:"year"`
 		Runtime       int32     `json:"runtime"`
 		Genres        []string  `json:"genres"`
-		CorrelationId uuid.UUID `json:"correlation_id"`
+		CorrelationId uuid.UUID `json:"correlation_id" binding:"-"`
 	}
 
 	input.CorrelationId = uuid.New()
@@ -37,10 +31,9 @@ func (h *Handler) CreateMovieHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to serialize message"})
 		return
 	}
-	fmt.Println(input)
-	fmt.Println(msgBytes)
+	h.logger.Debug(input.Title, nil)
 
-	err = h.producer.Producer(string(msgBytes), "movies-topic", time.Now())
+	err = h.producer.Produce(string(msgBytes), h.cfg.Kafka.Topics.Movie, input.CorrelationId.String(), time.Now())
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -50,30 +43,18 @@ func (h *Handler) CreateMovieHandler(c *gin.Context) {
 }
 
 func (h *Handler) GetMovieByCorrelation(c *gin.Context) {
-
 	corrID, err := uuid.Parse(c.Param("correlation_id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid correlation_id"})
 		return
 	}
-	urlCorrelation := urlDataServiceMovies + "/by-correlation" + fmt.Sprintf("/%s", corrID)
-
-	log.Printf(urlCorrelation)
-	resp, err := http.Get(urlCorrelation)
+	body, status, contentType, err := h.moviesClient.GetByCorrelationID(c, corrID.String())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
-		log.Printf(err.Error())
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, "application/json", body)
+	c.Data(status, contentType, body)
 }
 
 func (h *Handler) GetMovieByIdHandler(c *gin.Context) {
@@ -84,24 +65,13 @@ func (h *Handler) GetMovieByIdHandler(c *gin.Context) {
 		return
 	}
 
-	urlId := urlDataServiceMovies + fmt.Sprintf("/%s", idParam)
-
-	log.Printf(urlId)
-	resp, err := http.Get(urlId)
+	body, status, contentType, err := h.moviesClient.GetByID(c, id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
-		log.Printf(err.Error())
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	c.Data(status, contentType, body)
 }
 
 func (h *Handler) UpdateMovieHandler(c *gin.Context) {
@@ -111,32 +81,11 @@ func (h *Handler) UpdateMovieHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
+	payload, _ := io.ReadAll(c.Request.Body)
 
-	urlId := urlDataServiceMovies + fmt.Sprintf("/%s", idParam)
+	body, status, contentType, err := h.moviesClient.UpdateMovie(c, id, payload, nil)
 
-	req, err := http.NewRequest(http.MethodPatch, urlId, c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
-		return
-	}
-
-	req.Header = c.Request.Header
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	c.Data(status, contentType, body)
 }
 
 func (h *Handler) DeleteMovieHandler(c *gin.Context) {
@@ -147,31 +96,13 @@ func (h *Handler) DeleteMovieHandler(c *gin.Context) {
 		return
 	}
 
-	urlId := urlDataServiceMovies + fmt.Sprintf("/%s", idParam)
-
-	req, err := http.NewRequest(http.MethodDelete, urlId, c.Request.Body)
+	body, status, contentType, err := h.moviesClient.DeleteMovie(c, id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-
-	req.Header = c.Request.Header
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	c.Data(status, contentType, body)
 }
 
 func (h *Handler) ListMovieHandler(c *gin.Context) {
@@ -181,124 +112,51 @@ func (h *Handler) ListMovieHandler(c *gin.Context) {
 	page := c.Query("page")
 	pageSize := c.Query("page_size")
 
-	query := url.Values{}
-	if title != "" {
-		query.Set("title", title)
-	}
-	if sort != "" {
-		query.Set("sort", sort)
-	}
-	if page != "" {
-		query.Set("page", page)
-	}
-	if pageSize != "" {
-		query.Set("page_size", pageSize)
-	}
-	for _, genre := range genres {
-		if genre != "" {
-			query.Add("genres", genre)
-		}
-	}
-	remoteUrl := urlDataServiceMovies + "?" + query.Encode()
-
-	resp, err := http.Get(remoteUrl)
+	body, status, contentType, err := h.moviesClient.GetListMovie(c, title, sort, page, pageSize, genres)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	c.Data(status, contentType, body)
 }
 
-func (h *Handler) TopRatedMoviesHandler(c *gin.Context) {
-	urlGet := urlDataServiceMovies + "/top"
-
-	log.Printf(urlGet)
-	resp, err := http.Get(urlGet)
+func (h *Handler) GetTopRatedMoviesHandler(c *gin.Context) {
+	body, status, contentType, err := h.moviesClient.GetTopRatedMovies(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
-		log.Printf(err.Error())
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	c.Data(status, contentType, body)
 }
 
-func (h *Handler) GetWithoutReviews(c *gin.Context) {
-
-	urlId := urlDataServiceMovies + "/without-reviews"
-
-	log.Printf(urlId)
-	resp, err := http.Get(urlId)
+func (h *Handler) GetWithoutReviewsHandler(c *gin.Context) {
+	body, status, contentType, err := h.moviesClient.GetWithoutReviews(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
-		log.Printf(err.Error())
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	c.Data(status, contentType, body)
 }
 
-func (h *Handler) GetControversialMovies(c *gin.Context) {
-
-	urlId := urlDataServiceMovies + "/variance"
-
-	log.Printf(urlId)
-	resp, err := http.Get(urlId)
+func (h *Handler) GetControversialMoviesHandler(c *gin.Context) {
+	body, status, contentType, err := h.moviesClient.GetControversialMovies(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
-		log.Printf(err.Error())
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	c.Data(status, contentType, body)
 }
 
-func (h *Handler) GetAvgRatingByGenre(c *gin.Context) {
-	urlId := urlDataServiceMovies + "/avg-rating"
-
-	log.Printf(urlId)
-	resp, err := http.Get(urlId)
+func (h *Handler) GetAvgRatingByGenreHandler(c *gin.Context) {
+	body, status, contentType, err := h.moviesClient.GetAvgRatingByGenre(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
-		log.Printf(err.Error())
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	c.Data(status, contentType, body)
 }

@@ -2,23 +2,17 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"io"
-	"log"
 	"net/http"
-	"net/url"
-	"os"
 	"strconv"
 	"time"
 )
 
-var urlDataServiceReviews = os.Getenv("DATA_SERVICE_HOST") + "/api/reviews"
-
 func (h *Handler) CreateReviewHandler(c *gin.Context) {
 	var input struct {
-		CorrelationId uuid.UUID `json:"correlation_id"`
+		CorrelationId uuid.UUID `json:"correlation_id" binding:"-"`
 		MovieId       uint      `json:"movie_id"`
 		Rating        float32   `json:"rating"`
 		Comment       string    `json:"comment"`
@@ -37,10 +31,11 @@ func (h *Handler) CreateReviewHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to serialize message"})
 		return
 	}
-	fmt.Println(input)
-	fmt.Println(msgBytes)
+	h.logger.Debug(input.CorrelationId.String(), nil)
 
-	err = h.producer.Producer(string(msgBytes), "reviews-topic", time.Now())
+	key := strconv.Itoa(int(input.MovieId))
+
+	err = h.producer.Produce(string(msgBytes), h.cfg.Kafka.Topics.Review, key, time.Now())
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -57,23 +52,13 @@ func (h *Handler) GetReviewByIdHandler(c *gin.Context) {
 		return
 	}
 
-	urlId := urlDataServiceReviews + fmt.Sprintf("/%s", idParam)
-
-	resp, err := http.Get(urlId)
+	body, status, contentType, err := h.reviewsClient.GetByID(c, id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
-		log.Printf(err.Error())
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	c.Data(status, contentType, body)
 }
 
 func (h *Handler) GetReviewByCorrelation(c *gin.Context) {
@@ -82,24 +67,14 @@ func (h *Handler) GetReviewByCorrelation(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid correlation_id"})
 		return
 	}
-	urlCorrelation := urlDataServiceReviews + "/by-correlation" + fmt.Sprintf("/%s", corrID)
 
-	log.Printf(urlCorrelation)
-	resp, err := http.Get(urlCorrelation)
+	body, status, contentType, err := h.reviewsClient.GetByCorrelationID(c, corrID.String())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
-		log.Printf(err.Error())
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, "application/json", body)
+	c.Data(status, contentType, body)
 }
 
 func (h *Handler) UpdateReviewHandler(c *gin.Context) {
@@ -110,31 +85,15 @@ func (h *Handler) UpdateReviewHandler(c *gin.Context) {
 		return
 	}
 
-	urlId := urlDataServiceReviews + fmt.Sprintf("/%s", idParam)
+	payload, _ := io.ReadAll(c.Request.Body)
 
-	req, err := http.NewRequest(http.MethodPatch, urlId, c.Request.Body)
+	body, status, contentType, err := h.reviewsClient.UpdateReview(c, id, payload, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-
-	req.Header = c.Request.Header
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	c.Data(status, contentType, body)
 }
 
 func (h *Handler) DeleteReviewHandler(c *gin.Context) {
@@ -145,68 +104,28 @@ func (h *Handler) DeleteReviewHandler(c *gin.Context) {
 		return
 	}
 
-	urlId := urlDataServiceReviews + fmt.Sprintf("/%s", idParam)
-
-	req, err := http.NewRequest(http.MethodDelete, urlId, c.Request.Body)
+	body, status, contentType, err := h.reviewsClient.DeleteReview(c, id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-
-	req.Header = c.Request.Header
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	c.Data(status, contentType, body)
 }
 
 func (h *Handler) ListReviewHandler(c *gin.Context) {
-	params := url.Values{}
-	if movieID := c.Query("movie_id"); movieID != "" {
-		params.Set("movie_id", movieID)
-	}
-	if author := c.Query("author"); author != "" {
-		params.Set("author", author)
-	}
-	if rating := c.Query("rating"); rating != "" {
-		params.Set("rating", rating)
-	}
-	if page := c.Query("page"); page != "" {
-		params.Set("page", page)
-	}
-	if pageSize := c.Query("page_size"); pageSize != "" {
-		params.Set("page_size", pageSize)
-	}
-	if sort := c.Query("sort"); sort != "" {
-		params.Set("sort", sort)
-	}
+	movieID := c.Query("movie_id")
+	author := c.Query("author")
+	rating := c.Query("rating")
+	page := c.Query("page")
+	pageSize := c.Query("page_size")
+	sort := c.Query("sort")
 
-	fullURL := fmt.Sprintf("%s?%s", urlDataServiceReviews, params.Encode())
-
-	resp, err := http.Get(fullURL)
+	body, status, contentType, err := h.reviewsClient.GetListReview(c, movieID, author, rating, sort, page, pageSize)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to contact data service"})
+		h.logger.Error("ERROR: ", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "¯\\_(ツ)_/¯"})
 		return
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
-		return
-	}
-
-	c.Data(resp.StatusCode, "application/json", body)
+	c.Data(status, contentType, body)
 }

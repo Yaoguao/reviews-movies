@@ -13,7 +13,7 @@ COPY . .
 
 RUN go build -o /app/bin/app ./cmd/app
 
-# ===== STAGE 2: Minimal runtime =====
+#                 STAGE 2
 FROM debian:bullseye-slim AS data
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

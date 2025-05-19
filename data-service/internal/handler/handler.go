@@ -1,18 +1,18 @@
 package handler
 
 import (
-	"data-service/internal/jsonlog"
 	"data-service/internal/models"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"log/slog"
 )
 
 type Handler struct {
 	models *models.Models
-	logger *jsonlog.Logger
+	logger *slog.Logger
 }
 
-func NewHandler(models *models.Models, logger *jsonlog.Logger) *Handler {
+func NewHandler(models *models.Models, logger *slog.Logger) *Handler {
 	return &Handler{
 		models: models,
 		logger: logger,
@@ -23,7 +23,7 @@ func (h *Handler) Routes() *gin.Engine {
 	router := gin.New()
 
 	router.Use(gin.LoggerWithFormatter(func(p gin.LogFormatterParams) string {
-		h.logger.PrintInfo("request", map[string]string{
+		h.logger.Info("request", map[string]string{
 			"method": p.Method, "path": p.Path,
 			"status": fmt.Sprint(p.StatusCode), "latency": p.Latency.String(),
 		})

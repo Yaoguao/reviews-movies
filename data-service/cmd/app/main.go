@@ -5,13 +5,13 @@ import (
 	"data-service/internal/config"
 	"data-service/internal/data"
 	"data-service/internal/handler"
-	"data-service/internal/jsonlog"
 	"data-service/internal/kafka"
+	logger2 "data-service/internal/logger"
 	"data-service/internal/models"
 	"data-service/pkg/database"
 	"errors"
-	"flag"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,77 +20,64 @@ import (
 )
 
 type Application struct {
-	config config.Config
-	logger *jsonlog.Logger
+	config *config.Config
+	logger *slog.Logger
 }
-
-var address = []string{
-	os.Getenv("BROKER1_HOST"),
-	os.Getenv("BROKER2_HOST"),
-	os.Getenv("BROKER3_HOST"),
-}
-
-var (
-	moviesTopic  = "movies-topic"
-	reviewsTopic = "reviews-topic"
-	moviesGroup  = "movies-group"
-	reviewsGroup = "reviews-group"
-)
 
 func main() {
-	var cfg config.Config
-	flag.IntVar(&cfg.Port, "port", 8081, "API server port")
-	flag.StringVar(&cfg.Env, "env", "development", "Environment (development|staging|production)")
-	flag.Parse()
+	cfg, _ := config.LoadConfig()
 
-	cfg.DB.Dsn = fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
-		os.Getenv("POSTGRES_HOST"),
-		os.Getenv("POSTGRES_USER"),
-		os.Getenv("POSTGRES_PASSWORD"),
-		os.Getenv("POSTGRES_DB"),
-		os.Getenv("POSTGRES_PORT"),
-		os.Getenv("POSTGRES_SSLMODE"),
-	)
-	logger := jsonlog.New(os.Stdout, jsonlog.LEVEL_INFO)
+	logger := logger2.InitLogger(cfg.Env, os.Stdout)
 
+	logger.Debug(fmt.Sprintf("Config: %+v", *cfg))
 	db, err := database.OpenDB(cfg)
 	if err != nil {
-		logger.PrintFatal(err, nil)
+		logger.Info(err.Error(), nil)
 	}
 	if err := db.AutoMigrate(&data.Movie{}, &data.Review{}); err != nil {
-		logger.PrintFatal(err, nil)
+		logger.Info(err.Error(), nil)
 	}
 	defer func() {
 		conn, _ := db.DB()
 		conn.Close()
 	}()
-	logger.PrintInfo("database connection pool established", nil)
+	logger.Info("database connection pool established", nil)
 
 	app := &Application{config: cfg, logger: logger}
 	appModels := models.NewModels(db)
 	ginHandler := handler.NewHandler(appModels, logger)
 
-	movieConsumer, err := kafka.NewConsumer(nil, address, moviesTopic, moviesGroup)
+	movieConsumer, err := kafka.NewConsumer(
+		cfg.Kafka.Address,
+		cfg.Kafka.Topics.Movie,
+		cfg.Kafka.ConsumerGroup.Movie,
+	)
 	if err != nil {
-		logger.PrintFatal(err, nil)
+		logger.Info(err.Error(), nil)
+		os.Exit(1)
 	}
 
-	reviewConsumer, err := kafka.NewConsumer(nil, address, reviewsTopic, reviewsGroup)
+	reviewConsumer, err := kafka.NewConsumer(
+		cfg.Kafka.Address,
+		cfg.Kafka.Topics.Review,
+		cfg.Kafka.ConsumerGroup.Review,
+	)
 	if err != nil {
-		logger.PrintFatal(err, nil)
+		logger.Info(err.Error(), nil)
+		os.Exit(1)
 	}
 
 	go movieConsumer.StartWithFunc(ginHandler.HandleMovieMessage)
 	go reviewConsumer.StartWithFunc(ginHandler.HandleReviewMessage)
 
 	if err := app.serve(ginHandler.Routes()); err != nil {
-		logger.PrintFatal(err, nil)
+		logger.Info(err.Error(), nil)
 	}
 	if err := movieConsumer.Stop(); err != nil {
-		app.logger.PrintError(err, nil)
+		app.logger.Info(err.Error(), nil)
 	}
 	if err := reviewConsumer.Stop(); err != nil {
-		app.logger.PrintError(err, nil)
+		app.logger.Info(err.Error(), nil)
 	}
 }
 
@@ -110,14 +97,14 @@ func (app *Application) serve(router http.Handler) error {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		s := <-quit
-		app.logger.PrintInfo("caught signal, shutting down", map[string]string{"signal": s.String()})
+		app.logger.Info("caught signal, shutting down", map[string]string{"signal": s.String()})
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		shutdownErr <- srv.Shutdown(ctx)
 	}()
 
-	app.logger.PrintInfo("starting Gin server", map[string]string{
+	app.logger.Info("starting Gin server", map[string]string{
 		"env":  app.config.Env,
 		"addr": srv.Addr,
 	})
@@ -130,6 +117,11 @@ func (app *Application) serve(router http.Handler) error {
 		return err
 	}
 
-	app.logger.PrintInfo("server stopped", map[string]string{"addr": srv.Addr})
+	app.logger.Info("server stopped", map[string]string{"addr": srv.Addr})
 	return nil
 }
+
+//logFile, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+//if err != nil {
+//log.Fatalf("could not open log file: %v", err)
+//}

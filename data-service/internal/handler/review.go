@@ -49,7 +49,7 @@ func (h *Handler) HandleReviewMessage(message []byte, offset kafka.Offset) error
 		return fmt.Errorf("falied create review: %s", v.Errors)
 	}
 
-	h.logger.PrintInfo("KAFKA CREATE REVIEW OFFSET", map[string]string{
+	h.logger.Info("KAFKA CREATE REVIEW OFFSET", map[string]string{
 		"offset": offset.String(),
 	})
 
