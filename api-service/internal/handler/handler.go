@@ -4,10 +4,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"log/slog"
 	"reviews-movies/api-service/config"
-	"reviews-movies/api-service/interanal/apiclient"
-	"reviews-movies/api-service/interanal/apiclient/movies"
-	"reviews-movies/api-service/interanal/apiclient/reviews"
-	"reviews-movies/api-service/interanal/kafka"
+	"reviews-movies/api-service/internal/apiclient"
+	"reviews-movies/api-service/internal/apiclient/movies"
+	"reviews-movies/api-service/internal/apiclient/reviews"
+	"reviews-movies/api-service/internal/kafka"
 )
 
 type Handler struct {

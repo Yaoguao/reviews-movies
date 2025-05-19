@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"resty.dev/v3"
-	"reviews-movies/api-service/interanal/apiclient"
+	"reviews-movies/api-service/internal/apiclient"
 )
 
 type Client struct {
