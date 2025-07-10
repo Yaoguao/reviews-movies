@@ -23,6 +23,7 @@ type Application struct {
 	logger *slog.Logger
 }
 
+// test
 func main() {
 	cfg, _ := config.LoadConfig()
 
